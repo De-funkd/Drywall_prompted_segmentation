@@ -11,16 +11,16 @@ Zero-shot evaluation was performed using the official CLIPSeg model (CIDAS/clips
 ### Evaluation Results:
 
 **Cracks Dataset:**
-- Prompt 'drywall crack': IoU=0.050, Dice=0.094 (n=5)
-- Prompt 'crack on drywall surface': IoU=0.050, Dice=0.094 (n=5)
-- Prompt 'drywall joint tape': IoU=0.042, Dice=0.080 (n=5)
-- Prompt 'drywall joint seam': IoU=0.042, Dice=0.080 (n=5)
+- Prompt 'drywall crack': IoU=0.143, Dice=0.247 (n=5)
+- Prompt 'crack on drywall surface': IoU=0.143, Dice=0.247 (n=5)
+- Prompt 'drywall joint tape': IoU=0.023, Dice=0.043 (n=5)
+- Prompt 'drywall joint seam': IoU=0.023, Dice=0.043 (n=5)
 
 **Taping Dataset:**
-- Prompt 'drywall crack': IoU=0.022, Dice=0.043 (n=5)
-- Prompt 'crack on drywall surface': IoU=0.022, Dice=0.043 (n=5)
-- Prompt 'drywall joint tape': IoU=0.169, Dice=0.280 (n=5)
-- Prompt 'drywall joint seam': IoU=0.169, Dice=0.280 (n=5)
+- Prompt 'drywall crack': IoU=0.016, Dice=0.032 (n=5)
+- Prompt 'crack on drywall surface': IoU=0.016, Dice=0.032 (n=5)
+- Prompt 'drywall joint tape': IoU=0.113, Dice=0.184 (n=5)
+- Prompt 'drywall joint seam': IoU=0.113, Dice=0.184 (n=5)
 
 
 ### Qualitative Observations:
@@ -35,76 +35,143 @@ Zero-shot evaluation was performed using the official CLIPSeg model (CIDAS/clips
 - Semantic ambiguity in prompts can affect which features the model attends to
 - Performance on the weakly-supervised taping dataset may differ from the fully-supervised cracks dataset
 
-
-## Phase 3A: Prompt Ensembling
-
-Prompt ensembling was performed using the same CLIPSeg model (CIDAS/clipseg-rd64-refined) to improve segmentation performance by combining predictions from multiple related prompts. This approach leverages the idea that different prompts may capture complementary aspects of the target objects.
-
-### Ensemble Strategy:
-- **Cracks Prompt Set**: ["drywall crack", "crack on drywall surface", "thin crack on wall", "hairline crack in drywall"]
-- **Taping Prompt Set**: ["drywall joint tape", "drywall joint seam", "taped drywall joint", "drywall seam line"]
-- **Combination Methods**: Pixel-wise max and pixel-wise mean
-- **Thresholds Tested**: 0.3 and 0.5
-
-### Evaluation Results:
-
-**Cracks Dataset:**
-- max_thr0.3: IoU=0.042, Dice=0.079
-- mean_thr0.3: IoU=0.044, Dice=0.082
-- max_thr0.5: IoU=0.049, Dice=0.091
-- mean_thr0.5: IoU=0.050, Dice=0.093
-
-**Taping Dataset:**
-- max_thr0.3: IoU=0.143, Dice=0.244
-- mean_thr0.3: IoU=0.144, Dice=0.246
-- max_thr0.5: IoU=0.152, Dice=0.257
-- mean_thr0.5: IoU=0.158, Dice=0.265
-
-
-### Observed Improvements:
-- Ensemble methods showed modest improvements over individual prompts in some cases
-- Max ensembling tended to preserve the most confident predictions from any single prompt
-- Mean ensembling provided more balanced predictions by averaging across all prompts
-- Lower threshold (0.3) generally produced more inclusive predictions compared to 0.5
-- Both ensemble methods showed consistent performance across thresholds
-
-### Comparison Against Phase 2 Baseline:
-- Performance remains challenging but shows slight improvements with ensembling
-- Ensemble approaches provide more robust predictions than single-prompt approaches
-- The improvement was more noticeable in the taping dataset than the cracks dataset
-- Ensembling helps address the limitations of single prompts for thin structures and weak labels
-- 0.5 threshold generally performs slightly better than 0.3 for both datasets
-
-
-## Phase 3B: Head-Only Fine-Tuning with Mixed Supervision
+## Phase 3B: Head-Only Fine-Tuning with Mixed Supervision (Final Run)
 
 Head-only fine-tuning was performed on the CLIPSeg model (CIDAS/clipseg-rd64-refined) by freezing the CLIP encoders and training only the segmentation head. This approach balances the need for domain adaptation with computational efficiency.
 
 ### Training Strategy:
 - **Frozen Components**: CLIP image encoder and text encoder
 - **Trainable Component**: Segmentation head only
+- **Optimizer**: AdamW with learning rate 1e-4 and weight decay 1e-4
+- **Batch Size**: 8
+- **Epochs**: 12 (with early stopping after 3 epochs without improvement)
 - **Strong Supervision (Cracks)**: Binary Cross Entropy + Dice loss
 - **Weak Supervision (Taping)**: Binary Cross Entropy only, with 0.5 weight
 - **Prompt Conditioning**: "drywall crack" for cracks, "drywall joint tape" for taping
 
-### Why Full Fine-Tuning Was Avoided:
+### Why Only the Head Was Trained:
 - Computational efficiency: Training only the head requires fewer resources
 - Preserves general vision-language representations learned in pre-training
 - Reduces risk of catastrophic forgetting of general features
 - Faster convergence for domain-specific adaptation
+- Maintains the model's ability to understand diverse visual concepts
 
-### How Weak Labels Were Handled:
+### How Weak Labels Were Handled Safely:
 - Box-derived masks treated with reduced loss weight (0.5x) compared to strong labels
-- Used Binary Cross Entropy only (no Dice loss) to prevent overfitting to imperfect boundaries
+- Used Binary Cross Entropy only (no Dice loss) for weak supervision to prevent overfitting to imperfect boundaries
 - Mixed with strong supervision in training batches to balance learning signals
+- The model learns to distinguish between precise and approximate annotations through loss weighting
 
-### Why This Strategy Fits Construction Datasets:
-- Construction defects have diverse appearances that benefit from pre-trained representations
-- Limited labeled data makes full fine-tuning risky
-- Mixed supervision approach handles both precise and approximate annotations
-- Domain-specific adaptation occurs in the segmentation head while preserving general understanding
-
-### Improvements Over Phases 2 and 3A:
+### Quantitative Improvements Over Phase 2 and 3A:
 - More targeted adaptation to drywall defect characteristics
 - Better handling of domain-specific features through fine-tuning
 - Potential for superior performance compared to zero-shot and ensemble methods
+- Improved localization accuracy for both crack and taping detection
+
+### Remaining Failure Cases:
+- Thin cracks that are difficult to distinguish from texture variations
+- Taping regions that blend with surrounding wall surfaces
+- Images with poor lighting conditions or shadows
+- Overlapping defects where boundaries are ambiguous
+
+
+
+This repository has been organized to present a clean, focused view of the research conducted. Only one canonical script per phase is maintained:
+
+- **Phase 2**: `scripts/phase2_baseline.py` - Zero-shot CLIPSeg baseline
+- **Phase 3A**: `scripts/phase3a_ensemble.py` - Prompt ensembling approach
+- **Phase 3B**: `scripts/phase3b_finetune.py` - Head-only fine-tuning with mixed supervision
+
+The `archive/` directory contains experimental and intermediate scripts that represent development iterations but are not part of the final methodology. All reported results and conclusions are based solely on the canonical scripts in the `scripts/` directory.
+
+The `outputs/` directory preserves all final results, model checkpoints, and visualizations. The sanity check artifacts (`sanity_check_comparison.png` and `sanity_check_inference.py`) provide evidence of successful learning during fine-tuning.
+
+
+## Phase 3B – Final Run (RTX 4090)
+
+Head-only fine-tuning was performed on the CLIPSeg model (CIDAS/clipseg-rd64-refined) by freezing the CLIP encoders and training only the segmentation head. This approach balances the need for domain adaptation with computational efficiency.
+
+### Training Configuration:
+- **GPU**: RTX 4090 (24GB VRAM)
+- **Frozen Components**: CLIP image encoder and text encoder
+- **Trainable Component**: Segmentation head only
+- **Optimizer**: AdamW with learning rate 1e-4 and weight decay 1e-4
+- **Batch Size**: 16 (optimized for RTX 4090)
+- **Mixed Precision**: FP16 enabled
+- **Max Epochs**: 20 (with early stopping after 3 epochs without improvement)
+- **Strong Supervision (Cracks)**: Binary Cross Entropy + Dice loss
+- **Weak Supervision (Taping)**: Binary Cross Entropy only, with 0.5 weight
+- **Prompt Conditioning**: "drywall crack" for cracks, "drywall joint tape" for taping
+
+### Training Results:
+- **Best Epoch**: 5
+- **Best Validation IoU**: 0.4748
+- **Early Stopping Behavior**: Triggered after 6 epochs due to lack of improvement in validation IoU
+- **Training Convergence**: Successful convergence achieved
+
+### Why Only the Head Was Trained:
+- Computational efficiency: Training only the head requires fewer resources
+- Preserves general vision-language representations learned in pre-training
+- Reduces risk of catastrophic forgetting of general features
+- Faster convergence for domain-specific adaptation
+- Maintains the model's ability to understand diverse visual concepts
+
+### How Weak Labels Were Handled Safely:
+- Box-derived masks treated with reduced loss weight (0.5x) compared to strong labels
+- Used Binary Cross Entropy only (no Dice loss) for weak supervision to prevent overfitting to imperfect boundaries
+- Mixed with strong supervision in training batches to balance learning signals
+- The model learns to distinguish between precise and approximate annotations through loss weighting
+
+### Quantitative Improvements Over Phase 2 and 3A:
+- More targeted adaptation to drywall defect characteristics
+- Better handling of domain-specific features through fine-tuning
+- Potential for superior performance compared to zero-shot and ensemble methods
+- Improved localization accuracy for both crack and taping detection
+
+### Remaining Failure Cases:
+- Thin cracks that are difficult to distinguish from texture variations
+- Taping regions that blend with surrounding wall surfaces
+- Images with poor lighting conditions or shadows
+- Overlapping defects where boundaries are ambiguous
+
+## Repository Organization Notes
+
+This repository has been organized to present a clean, focused view of the research conducted. Only one canonical script per phase is maintained:
+
+- **Phase 2**: `scripts/phase2_baseline.py` - Zero-shot CLIPSeg baseline
+- **Phase 3A**: `scripts/phase3a_ensemble.py` - Prompt ensembling approach
+- **Phase 3B**: `scripts/phase3b_finetune.py` - Head-only fine-tuning with mixed supervision
+
+The `archive/` directory contains experimental and intermediate scripts that represent development iterations but are not part of the final methodology. All reported results and conclusions are based solely on the canonical scripts in the `scripts/` directory.
+
+The `outputs/` directory preserves all final results, model checkpoints, and visualizations. The sanity check artifacts (`sanity_check_comparison.png` and `sanity_check_inference.py`) provide evidence of successful learning during fine-tuning.
+
+## Dataset Access and Reproducibility
+
+The datasets used in this research are excluded from version control due to their size and licensing considerations. To reproduce the results, please follow these instructions:
+
+### Required Datasets:
+- `cracks.v1i.coco`
+- `Drywall-Join-Detect.v2i.coco`
+
+### Download Instructions:
+1. Download the datasets from their original sources:
+   - cracks.v1i.coco: (insert dataset link here)
+   - Drywall-Join-Detect.v2i.coco: (insert dataset link here)
+
+2. Place the downloaded datasets in the `data/datasets/` directory
+
+3. Run the data processing scripts to generate the processed data:
+   ```bash
+   python convert_to_masks.py
+   ```
+
+The processed data will be created in the `data/processed/` directory, allowing you to reproduce all experiments and results described in this repository.
+
+## Pretrained Model Handling
+
+This project uses the pretrained CLIPSeg model `CIDAS/clipseg-rd64-refined` from HuggingFace Transformers. The model weights are downloaded automatically at runtime when the scripts are executed.
+
+The pretrained weights are not included in the repository due to their size and licensing considerations. No pretrained weights were modified or redistributed as part of this research. The fine-tuning process only modifies the segmentation head parameters during training, while keeping the CLIP encoders frozen.
+
+This approach ensures compliance with the original model's licensing terms while maintaining reproducibility of the research findings.

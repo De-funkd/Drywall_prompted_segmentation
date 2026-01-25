@@ -1,0 +1,21 @@
+# Dataset directories - excluded due to size and licensing considerations
+data/datasets/
+data/processed/
+
+# Fine-tuned checkpoints - these are outputs, not inputs
+outputs/clipseg_finetuned/*.pth
+
+# Pretrained model caches - downloaded automatically at runtime
+.cache/
+**/.cache/
+**/huggingface/
+**/torch/
+**/transformers/
+
+# Reason: Raw and processed datasets are excluded from version control
+# to maintain repository size and respect licensing terms. These can be
+# reproduced using the documented data preparation scripts.
+
+# Reason: Pretrained model weights are downloaded automatically from
+# HuggingFace Hub at runtime and are not redistributed with this repository
+# to respect licensing terms and reduce repository size.
