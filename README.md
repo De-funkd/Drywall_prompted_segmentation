@@ -168,6 +168,129 @@ The datasets used in this research are excluded from version control due to thei
 
 The processed data will be created in the `data/processed/` directory, allowing you to reproduce all experiments and results described in this repository.
 
+## Known Issue & Fix
+
+### Problem Identified
+During review, it was discovered that the initial evaluation metrics were computed incorrectly. The predictions in `outputs/clipseg_finetuned` did not correspond to the validation split, causing incorrect metric calculation due to mismatched filenames between predictions and ground truth masks.
+
+### Solution Implemented
+To address this issue, we have implemented a proper evaluation pipeline:
+
+1. **New Inference Script**: `inference_valid.py` - generates predictions specifically on the validation split using the fine-tuned checkpoint
+2. **Robust Evaluation Script**: `eval_valid.py` - computes metrics only on properly matched prediction-ground truth pairs from the validation set
+3. **Recomputed Metrics**: Final metrics are computed only after re-running inference on the validation split
+
+This ensures that all reported metrics are based on correctly matched data pairs.
+
+## Evaluation & Runtime
+
+### Dataset Split Sizes
+- **Cracks Dataset**: Contains polygon-based segmentation labels for precise crack detection
+- **Taping Dataset**: Contains bounding box-derived masks for joint tape detection
+- Both datasets were processed into train/validation splits with corresponding ground truth masks
+
+### Performance Metrics (Corrected Validation Results)
+The following table shows the corrected quantitative evaluation of the fine-tuned CLIPSeg model on the validation set:
+
+| Dataset         | mIoU       | Dice       | Samples |
+|-----------------|------------|------------|---------|
+| Cracks          | 0.4902     | 0.6338     | 201     |
+| Taping          | 0.4389     | 0.5927     | 86      |
+
+*Note: These metrics are computed only after re-running inference on the validation split to ensure correct pairing between predictions and ground truth. The taping dataset has multiple mask annotations per image (202 total masks for 86 images), and each prediction is evaluated against all corresponding ground truth masks.*
+
+### Runtime Information
+- **Inference Time**: ~0.15 seconds per image (on RTX 4090)
+- **Model Size**: ~250 MB on disk
+- **Hardware**: GPU (RTX 4090) recommended for optimal performance, CPU fallback available
+
+### Notes
+- Datasets and model weights are not included in the repository due to size constraints
+- To reproduce corrected results, run the following sequence:
+  ```bash
+  python inference_valid.py  # Generate predictions on validation set
+  python eval_valid.py       # Evaluate on properly matched pairs
+  ```
+- The evaluation script computes mIoU and Dice coefficients by strictly matching prediction masks to ground truth by filename, erroring out if mismatches are detected
+
+## Dataset Access and Reproducibility
+
+The datasets and model outputs used in this research are excluded from version control due to their size and licensing considerations. To reproduce the results, please follow these instructions:
+
+### Required Datasets:
+- `cracks.v1i.coco`
+- `Drywall-Join-Detect.v2i.coco`
+
+### Download Instructions:
+1. Download the datasets from their original sources:
+   - cracks.v1i.coco: (insert dataset link here)
+   - Drywall-Join-Detect.v2i.coco: (insert dataset link here)
+
+2. Place the downloaded datasets in the `data/datasets/` directory
+
+3. Run the data processing scripts to generate the processed data:
+   ```bash
+   python convert_to_masks.py
+   ```
+
+The processed data will be created in the `data/processed/` directory, allowing you to reproduce all experiments and results described in this repository.
+
+### Reproducing the Fixed Evaluation Pipeline
+
+After setting up the datasets, follow these steps to reproduce the corrected evaluation:
+
+1. **Train the model** (if not already done):
+   ```bash
+   python scripts/phase3b_finetune.py
+   ```
+   This will create the fine-tuned model checkpoint at `outputs/clipseg_finetuned/best_model.pth`.
+
+2. **Generate predictions on validation set**:
+   ```bash
+   python inference_valid.py
+   ```
+   This creates predictions in `outputs/clipseg_finetuned_eval/{cracks,taping}/`.
+
+3. **Evaluate the model**:
+   ```bash
+   python eval_valid.py
+   ```
+   This computes the corrected metrics on the validation set.
+
+### Files Excluded from Git (See .gitignore)
+
+The following types of files are excluded from version control:
+- Raw and processed datasets (`data/processed/`)
+- Model outputs and checkpoints (`outputs/`)
+- Large media files (images, videos)
+- Virtual environments and cached files
+- The fine-tuned model checkpoint (`best_model.pth`)
+
+These files are excluded to keep the repository lightweight and avoid committing large binary files to Git.
+
+### Reproduction Requirements
+
+To reproduce these results, you will need:
+- Python 3.8+
+- Required packages listed in `requirements.txt`
+- At least 20GB free disk space for datasets and model caches
+- GPU recommended for faster inference (though CPU is supported)
+
+Install dependencies with:
+```bash
+pip install -r requirements.txt
+```
+
+## Repository Scripts Overview
+
+This repository contains several key scripts for reproducing the research:
+
+- **`scripts/phase3b_finetune.py`**: Main training script for head-only fine-tuning of CLIPSeg
+- **`inference_valid.py`**: Generates predictions on validation set using the fine-tuned model
+- **`eval_valid.py`**: Evaluates model performance on validation set with proper file matching
+- **`evaluation_metrics.py`**: Original evaluation script (preserved for reference)
+- **`sanity_check_inference.py`**: Verification script to confirm model learning
+
 ## Pretrained Model Handling
 
 This project uses the pretrained CLIPSeg model `CIDAS/clipseg-rd64-refined` from HuggingFace Transformers. The model weights are downloaded automatically at runtime when the scripts are executed.

@@ -1,21 +1,99 @@
-# Dataset directories - excluded due to size and licensing considerations
-data/datasets/
+# Dependencies
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and Outputs - THESE ARE LARGE FILES THAT SHOULD NOT BE PUSHED
+data/raw/
 data/processed/
+outputs/
 
-# Fine-tuned checkpoints - these are outputs, not inputs
-outputs/clipseg_finetuned/*.pth
-
-# Pretrained model caches - downloaded automatically at runtime
+# Model checkpoints and cached models
 .cache/
-**/.cache/
-**/huggingface/
-**/torch/
-**/transformers/
+.huggingface/
+transformers_cache/
+~/.cache/huggingface/
 
-# Reason: Raw and processed datasets are excluded from version control
-# to maintain repository size and respect licensing terms. These can be
-# reproduced using the documented data preparation scripts.
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
 
-# Reason: Pretrained model weights are downloaded automatically from
-# HuggingFace Hub at runtime and are not redistributed with this repository
-# to respect licensing terms and reduce repository size.
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Large media files that are not source code
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Dataset files
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# PyTorch specific
+*.pth
+*.pt
+*.ckpt
+
+# Custom ignores for this project
+# The processed data and model outputs are too large for git
+data/processed/
+outputs/
+
+# Specific model files that are large
+outputs/clipseg_finetuned/best_model.pth
+outputs/clipseg_finetuned/*
+outputs/clipseg_finetuned_eval/
