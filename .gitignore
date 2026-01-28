@@ -1,10 +1,14 @@
-# Dependencies
+# Virtual Environments
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 .env
+.env.local
+.env.dev
+.env.prod
 
 # Python
 __pycache__/
@@ -28,35 +32,18 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
-venv/
-env/
-ENV/
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.tmp
+*.bak
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Data and Outputs - THESE ARE LARGE FILES THAT SHOULD NOT BE PUSHED
-data/raw/
-data/processed/
-outputs/
-
-# Model checkpoints and cached models
-.cache/
-.huggingface/
-transformers_cache/
-~/.cache/huggingface/
-
-# Jupyter notebooks checkpoints
-.ipynb_checkpoints/
 
 # Logs
 *.log
@@ -65,35 +52,67 @@ logs/
 # Temporary files
 tmp/
 temp/
-*.tmp
 
-# Large media files that are not source code
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.tiff
-*.webp
+# Large model checkpoints and cache
+.cache/
+.huggingface/
+transformers_cache/
+~/.cache/huggingface/
 
-# Dataset files
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Dataset archives (these are large files)
 *.zip
 *.tar
 *.gz
 *.rar
 *.7z
 
-# PyTorch specific
+# Large model files (these are typically too big for git)
 *.pth
 *.pt
 *.ckpt
+*.bin
+*.h5
+*.pb
+*.onnx
 
-# Custom ignores for this project
-# The processed data and model outputs are too large for git
-data/processed/
-outputs/
+# Large visualization/image files that are outputs (ignore everything except samples)
+# First ignore all visualizations
+outputs/clipseg_baseline/*/*/*/visualizations/
+outputs/clipseg_ensemble/*/*/*/visualizations/
+outputs/clipseg_finetuned/*/*/visualizations/
+# Then allow the sample directories
+!outputs/clipseg_baseline/samples/
+!outputs/clipseg_ensemble/samples/
+!outputs/clipseg_finetuned/samples/
+# Also ignore eval outputs
+outputs/clipseg_finetuned_eval/**/*.png
+outputs/clipseg_finetuned_test/**/*.png
 
-# Specific model files that are large
+# Large prediction mask files
+outputs/clipseg_ensemble/*/*/*/predictions/*.png
+outputs/clipseg_baseline/*/*/*/*.png
+outputs/clipseg_finetuned/*/*/predictions/*.png
+
+# Large image files in data directories
+data/processed/*/*/*.jpg
+data/processed/*/*/*.jpeg
+data/processed/*/*/*.png
+data/datasets/*/*/*.jpg
+data/datasets/*/*/*.jpeg
+data/datasets/*/*/*.png
+data/cracks/*/*/*.jpg
+data/cracks/*/*/*.jpeg
+data/cracks/*/*/*.png
+data/taping/*/*/*.jpg
+data/taping/*/*/*.jpeg
+data/taping/*/*/*.png
+
+# Large visualization/image files that are outputs (specific files)
 outputs/clipseg_finetuned/best_model.pth
-outputs/clipseg_finetuned/*
-outputs/clipseg_finetuned_eval/
+archive/sanity_check_comparison.png
+
+# Ignore __pycache__ directories
+**/__pycache__/
