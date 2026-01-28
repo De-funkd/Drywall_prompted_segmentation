@@ -96,19 +96,9 @@ outputs/clipseg_ensemble/*/*/*/predictions/*.png
 outputs/clipseg_baseline/*/*/*/*.png
 outputs/clipseg_finetuned/*/*/predictions/*.png
 
-# Large image files in data directories
-data/processed/*/*/*.jpg
-data/processed/*/*/*.jpeg
-data/processed/*/*/*.png
-data/datasets/*/*/*.jpg
-data/datasets/*/*/*.jpeg
-data/datasets/*/*/*.png
-data/cracks/*/*/*.jpg
-data/cracks/*/*/*.jpeg
-data/cracks/*/*/*.png
-data/taping/*/*/*.jpg
-data/taping/*/*/*.jpeg
-data/taping/*/*/*.png
+# Ignore all contents of data directory except for .gitkeep files to preserve directory structure
+data/**/*
+!data/**/.gitkeep
 
 # Large visualization/image files that are outputs (specific files)
 outputs/clipseg_finetuned/best_model.pth

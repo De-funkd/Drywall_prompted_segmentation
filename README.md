@@ -27,7 +27,8 @@ Fine-tune CLIPSeg model for binary segmentation of drywall defects (cracks and j
    ```
 
 2. Prepare datasets:
-   - Download `cracks.v1i.coco` and `Drywall-Join-Detect.v2i.coco` datasets
+   - Download [cracks.v1i.coco](https://universe.roboflow.com/fyp-ny1jt/cracks-3ii36/drywall_prompted_segmentation) and [Drywall-Join-Detect.v2i.coco](https://universe.roboflow.com/objectdetect-pu6rn/drywall-join-detect) datasets
+
    - Place in `data/datasets/` directory
    - Run data processing scripts to generate processed data
 
@@ -38,15 +39,15 @@ Fine-tune CLIPSeg model for binary segmentation of drywall defects (cracks and j
 
 4. Generate predictions on validation set:
    ```bash
-   python evals_&_inf/inference_valid.py
+   python utils/inference_valid.py
    ```
 
 5. Evaluate the model:
    ```bash
-   python evals_&_inf/eval_valid.py
+   python utils/eval_valid.py
    ```
 
 6. Perform sanity check:
    ```bash
-   python evals_&_inf/sanity_check_inference.py
+   python utils/sanity_check_inference.py
    ```
