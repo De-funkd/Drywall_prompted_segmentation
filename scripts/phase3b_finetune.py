@@ -13,6 +13,17 @@ from sklearn.metrics import jaccard_score, f1_score
 import warnings
 warnings.filterwarnings('ignore')
 
+# ---------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = PROJECT_ROOT / "data" / "processed"
+OUT_ROOT = PROJECT_ROOT / "outputs" / "clipseg_finetuned"
+README_PATH = PROJECT_ROOT / "README.md"
+
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+
 def compute_iou(pred_mask, gt_mask):
     """Compute Intersection over Union"""
     intersection = np.logical_and(pred_mask, gt_mask).sum()
@@ -147,18 +158,18 @@ def collate_fn(batch):
 def validate_model(model, processor, device):
     """Validate the model on validation sets and return average IoU"""
     print("Validating model...")
-    
+
     # Validation datasets
     cracks_val_dataset = DrywallDataset(
-        "data/processed/cracks/valid/images",
-        "data/processed/cracks/valid/masks",
+        DATA_ROOT / "cracks" / "valid" / "images",
+        DATA_ROOT / "cracks" / "valid" / "masks",
         "drywall crack",
         processor
     )
 
     taping_val_dataset = DrywallDataset(
-        "data/processed/taping/valid/images",
-        "data/processed/taping/valid/masks",
+        DATA_ROOT / "taping" / "valid" / "images",
+        DATA_ROOT / "taping" / "valid" / "masks",
         "drywall joint tape",
         processor
     )
@@ -280,7 +291,7 @@ def train_fine_tune():
     print("Starting Phase 3B – Final Run (RTX 4090): Head-Only Fine-Tuning with Mixed Supervision...")
 
     # Create output directory
-    os.makedirs("outputs/clipseg_finetuned", exist_ok=True)
+    os.makedirs(OUT_ROOT, exist_ok=True)
 
     # Initialize model and processor
     model = CLIPSegForImageSegmentation.from_pretrained('CIDAS/clipseg-rd64-refined')
@@ -319,15 +330,15 @@ def train_fine_tune():
 
     # Create datasets
     cracks_train_dataset = DrywallDataset(
-        "data/processed/cracks/train/images",
-        "data/processed/cracks/train/masks",
+        DATA_ROOT / "cracks" / "train" / "images",
+        DATA_ROOT / "cracks" / "train" / "masks",
         "drywall crack",
         processor
     )
 
     taping_train_dataset = DrywallDataset(
-        "data/processed/taping/train/images",
-        "data/processed/taping/train/masks",
+        DATA_ROOT / "taping" / "train" / "images",
+        DATA_ROOT / "taping" / "train" / "masks",
         "drywall joint tape",
         processor
     )
@@ -444,7 +455,7 @@ def train_fine_tune():
             patience_counter = 0
             
             # Save best model checkpoint
-            checkpoint_path = "outputs/clipseg_finetuned/best_model.pth"
+            checkpoint_path = OUT_ROOT / "best_model.pth"
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -462,7 +473,7 @@ def train_fine_tune():
     print("Training completed successfully!")
     
     # Load best model for final evaluation
-    checkpoint = torch.load("outputs/clipseg_finetuned/best_model.pth")
+    checkpoint = torch.load(OUT_ROOT / "best_model.pth")
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"Loaded best model with validation IoU: {checkpoint['val_iou']:.4f}")
 
@@ -479,20 +490,22 @@ def evaluate_model(model, processor, device):
     print("Starting final evaluation on validation sets...")
 
     # Create output directories
-    os.makedirs("outputs/clipseg_finetuned/cracks", exist_ok=True)
-    os.makedirs("outputs/clipseg_finetuned/taping", exist_ok=True)
+    cracks_out_dir = OUT_ROOT / "cracks"
+    taping_out_dir = OUT_ROOT / "taping"
+    os.makedirs(cracks_out_dir, exist_ok=True)
+    os.makedirs(taping_out_dir, exist_ok=True)
 
     # Validation datasets
     cracks_val_dataset = DrywallDataset(
-        "data/processed/cracks/valid/images",
-        "data/processed/cracks/valid/masks",
+        DATA_ROOT / "cracks" / "valid" / "images",
+        DATA_ROOT / "cracks" / "valid" / "masks",
         "drywall crack",
         processor
     )
 
     taping_val_dataset = DrywallDataset(
-        "data/processed/taping/valid/images",
-        "data/processed/taping/valid/masks",
+        DATA_ROOT / "taping" / "valid" / "images",
+        DATA_ROOT / "taping" / "valid" / "masks",
         "drywall joint tape",
         processor
     )
@@ -557,12 +570,12 @@ def evaluate_model(model, processor, device):
 
             # Save prediction
             filename = sample["filename"].rsplit('.', 1)[0]
-            pred_path = f"outputs/clipseg_finetuned/cracks/{filename}_pred.png"
-            cv2.imwrite(pred_path, (pred_mask * 255).astype(np.uint8))
+            pred_path = cracks_out_dir / f"{filename}_pred.png"
+            cv2.imwrite(str(pred_path), (pred_mask * 255).astype(np.uint8))
 
             # Create visualization for first 5 samples
             if i < 5:
-                image = cv2.imread(os.path.join("data/processed/cracks/valid/images", sample["filename"]))
+                image = cv2.imread(str(DATA_ROOT / "cracks" / "valid" / "images" / sample["filename"]))
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -578,8 +591,8 @@ def evaluate_model(model, processor, device):
                 axes[2].set_title(f"Prediction\n(IoU: {iou:.3f}, Dice: {dice:.3f})")
                 axes[2].axis('off')
 
-                vis_path = f"outputs/clipseg_finetuned/cracks/{filename}_vis.png"
-                plt.savefig(vis_path, dpi=150, bbox_inches='tight')
+                vis_path = cracks_out_dir / f"{filename}_vis.png"
+                plt.savefig(str(vis_path), dpi=150, bbox_inches='tight')
                 plt.close()
 
     # Evaluate taping dataset
@@ -639,12 +652,12 @@ def evaluate_model(model, processor, device):
 
             # Save prediction
             filename = sample["filename"].rsplit('.', 1)[0]
-            pred_path = f"outputs/clipseg_finetuned/taping/{filename}_pred.png"
-            cv2.imwrite(pred_path, (pred_mask * 255).astype(np.uint8))
+            pred_path = taping_out_dir / f"{filename}_pred.png"
+            cv2.imwrite(str(pred_path), (pred_mask * 255).astype(np.uint8))
 
             # Create visualization for first 5 samples
             if i < 5:
-                image = cv2.imread(os.path.join("data/processed/taping/valid/images", sample["filename"]))
+                image = cv2.imread(str(DATA_ROOT / "taping" / "valid" / "images" / sample["filename"]))
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -660,8 +673,8 @@ def evaluate_model(model, processor, device):
                 axes[2].set_title(f"Prediction\n(IoU: {iou:.3f}, Dice: {dice:.3f})")
                 axes[2].axis('off')
 
-                vis_path = f"outputs/clipseg_finetuned/taping/{filename}_vis.png"
-                plt.savefig(vis_path, dpi=150, bbox_inches='tight')
+                vis_path = taping_out_dir / f"{filename}_vis.png"
+                plt.savefig(str(vis_path), dpi=150, bbox_inches='tight')
                 plt.close()
 
     # Print evaluation results
@@ -681,7 +694,7 @@ def evaluate_model(model, processor, device):
 
 def update_readme_with_finetuning_results(epoch, val_iou):
     """Update README with Phase 3B RTX 4090 results"""
-    readme_path = "README.md"
+    readme_path = README_PATH
 
     phase3b_section = f"""
 
@@ -768,7 +781,7 @@ def main():
     # Run fine-tuning
     model = train_fine_tune()
 
-    print("Phase 3B – Final Run (RTX 4090) completed successfully!")
+    print(f"Phase 3B – Final Run (RTX 4090) completed successfully! Checkpoints saved to {OUT_ROOT}")
 
 if __name__ == "__main__":
     main()

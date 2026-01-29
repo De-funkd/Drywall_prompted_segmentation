@@ -10,6 +10,17 @@ from sklearn.metrics import jaccard_score, f1_score
 import warnings
 warnings.filterwarnings('ignore')
 
+# ---------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = PROJECT_ROOT / "data" / "processed"
+OUT_ROOT = PROJECT_ROOT / "outputs" / "clipseg_baseline"
+README_PATH = PROJECT_ROOT / "README.md"
+
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+
 # Try importing CLIPSeg - if it fails, we'll handle it gracefully
 try:
     from clipseg.models.clipseg import CLIPSegModel
@@ -72,22 +83,22 @@ def compute_dice(pred_mask, gt_mask):
 
 def run_clipseg_inference():
     print("Starting CLIPSeg inference...")
-    
+
     # Create output directories
-    os.makedirs("outputs/clipseg_baseline", exist_ok=True)
-    
+    os.makedirs(OUT_ROOT, exist_ok=True)
+
     # Define prompts
     prompts = [
         "drywall crack",
-        "crack on drywall surface", 
+        "crack on drywall surface",
         "drywall joint tape",
         "drywall joint seam"
     ]
-    
+
     # Define datasets
     datasets = {
-        "cracks": "data/processed/cracks/valid/images",
-        "taping": "data/processed/taping/valid/images"
+        "cracks": DATA_ROOT / "cracks" / "valid" / "images",
+        "taping": DATA_ROOT / "taping" / "valid" / "images"
     }
     
     # Initialize model and processor
@@ -110,20 +121,20 @@ def run_clipseg_inference():
         if not os.path.exists(img_dir):
             print(f"Dataset {dataset_name} not found at {img_dir}, skipping...")
             continue
-            
+
         print(f"\nProcessing {dataset_name} dataset...")
-        
+
         # Create output directories for this dataset
         dataset_metrics = {}
-        
+
         for prompt in prompts:
             prompt_clean = prompt.replace(" ", "_").replace("-", "_")
-            output_dir = f"outputs/clipseg_baseline/{dataset_name}/{prompt_clean}"
-            vis_dir = f"{output_dir}/visualizations"
+            output_dir = OUT_ROOT / dataset_name / prompt_clean
+            vis_dir = output_dir / "visualizations"
             os.makedirs(vis_dir, exist_ok=True)
-            
+
             print(f"  Processing prompt: '{prompt}'")
-            
+
             # Get image files
             img_files = [f for f in os.listdir(img_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             
@@ -145,16 +156,17 @@ def run_clipseg_inference():
                 
                 # Load corresponding ground truth mask
                 mask_file = img_file.rsplit('.', 1)[0] + "_mask.png"
-                mask_path = os.path.join(img_dir.replace('/images', '/masks'), mask_file)
+                mask_dir = Path(str(img_dir)).parent / "masks"
+                mask_path = mask_dir / mask_file
                 if os.path.exists(mask_path):
-                    gt_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    gt_mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
                     if gt_mask is not None:
                         gt_mask = (gt_mask > 127).astype(bool)  # Convert to binary
                     else:
                         gt_mask = np.zeros((orig_h, orig_w), dtype=bool)
                 else:
                     # Try to find a matching mask file by looking for similar names
-                    mask_candidates = list(Path(img_dir.replace('/images', '/masks')).glob(f"*{img_file.split('.')[0]}*"))
+                    mask_candidates = list(mask_dir.glob(f"*{img_file.split('.')[0]}*"))
                     if mask_candidates:
                         gt_mask = cv2.imread(str(mask_candidates[0]), cv2.IMREAD_GRAYSCALE)
                         if gt_mask is not None:
@@ -196,29 +208,29 @@ def run_clipseg_inference():
                 
                 # Create visualization
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                
+
                 axes[0].imshow(image_rgb)
                 axes[0].set_title("Original Image")
                 axes[0].axis('off')
-                
+
                 axes[1].imshow(gt_mask, cmap='gray')
                 axes[1].set_title("Ground Truth Mask")
                 axes[1].axis('off')
-                
+
                 axes[2].imshow(pred_binary, cmap='gray')
                 axes[2].set_title(f"Predicted Mask\n(Prompt: '{prompt}')")
                 axes[2].axis('off')
-                
+
                 plt.suptitle(f"IoU: {iou:.3f}, Dice: {dice:.3f}")
                 plt.tight_layout()
-                
-                vis_path = os.path.join(vis_dir, f"{img_file.replace('.', '_')}_{prompt_clean}_vis.png")
-                plt.savefig(vis_path, dpi=150, bbox_inches='tight')
+
+                vis_path = vis_dir / f"{img_file.replace('.', '_')}_{prompt_clean}_vis.png"
+                plt.savefig(str(vis_path), dpi=150, bbox_inches='tight')
                 plt.close()
-                
+
                 # Save predicted mask
-                mask_output_path = os.path.join(output_dir, f"{img_file.rsplit('.', 1)[0]}_pred_mask.png")
-                cv2.imwrite(mask_output_path, (pred_binary.astype(np.uint8) * 255))
+                mask_output_path = output_dir / f"{img_file.rsplit('.', 1)[0]}_pred_mask.png"
+                cv2.imwrite(str(mask_output_path), (pred_binary.astype(np.uint8) * 255))
                 
                 print(f"    Processed {img_file}: IoU={iou:.3f}, Dice={dice:.3f}")
             
@@ -240,8 +252,8 @@ def run_clipseg_inference():
 
 def update_readme(metrics):
     """Update README with Phase 2 results"""
-    readme_path = "README.md"
-    
+    readme_path = README_PATH
+
     phase2_section = f"""
 
 ## Phase 2: Zero-shot CLIPSeg Baseline
@@ -314,7 +326,7 @@ def main():
     # Update README
     update_readme(metrics)
     
-    print(f"\nResults saved to outputs/clipseg_baseline/")
+    print(f"\nResults saved to {OUT_ROOT}/")
     print("Visualizations saved alongside predicted masks")
     print("README.md updated with Phase 2 section")
 
