@@ -1,318 +1,265 @@
 import os
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 import cv2
 from PIL import Image
 import matplotlib.pyplot as plt
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
 from pathlib import Path
+import warnings
+warnings.filterwarnings("ignore")
 
-def compute_iou(pred_mask, gt_mask):
-    """Compute Intersection over Union"""
-    intersection = np.logical_and(pred_mask, gt_mask).sum()
-    union = np.logical_or(pred_mask, gt_mask).sum()
-    if union == 0:
-        return 1.0 if intersection == 0 else 0.0
-    return float(intersection) / float(union)
+# ---------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------
 
-def compute_dice(pred_mask, gt_mask):
-    """Compute Dice coefficient"""
-    intersection = np.logical_and(pred_mask, gt_mask).sum()
-    total = pred_mask.sum() + gt_mask.sum()
-    if total == 0:
-        return 1.0 if intersection == 0 else 0.0
-    return float(2 * intersection) / float(total)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = PROJECT_ROOT / "data" / "processed"
+OUT_ROOT = PROJECT_ROOT / "outputs" / "clipseg_finetuned"
 
-def run_ensemble_inference():
-    print("Starting CLIPSeg prompt ensembling inference...")
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # Create output directories
-    os.makedirs("outputs/clipseg_ensemble", exist_ok=True)
+# ---------------------------------------------------------------------
+# METRICS
+# ---------------------------------------------------------------------
 
-    # Define prompt sets
-    cracks_prompts = [
-        "drywall crack",
-        "crack on drywall surface", 
-        "thin crack on wall",
-        "hairline crack in drywall"
-    ]
-    
-    taping_prompts = [
-        "drywall joint tape",
-        "drywall joint seam",
-        "taped drywall joint", 
-        "drywall seam line"
-    ]
+def compute_iou(pred, gt):
+    inter = np.logical_and(pred, gt).sum()
+    union = np.logical_or(pred, gt).sum()
+    return 1.0 if union == 0 and inter == 0 else inter / max(union, 1)
 
-    # Define datasets
-    datasets = {
-        "cracks": {
-            "path": "data/processed/cracks/valid/images",
-            "prompts": cracks_prompts
-        },
-        "taping": {
-            "path": "data/processed/taping/valid/images", 
-            "prompts": taping_prompts
+def compute_dice(pred, gt):
+    inter = np.logical_and(pred, gt).sum()
+    total = pred.sum() + gt.sum()
+    return 1.0 if total == 0 and inter == 0 else 2 * inter / max(total, 1)
+
+# ---------------------------------------------------------------------
+# DATASET
+# ---------------------------------------------------------------------
+
+class DrywallDataset(Dataset):
+    def __init__(self, img_dir, mask_dir, prompt, processor):
+        self.img_dir = Path(img_dir)
+        self.mask_dir = Path(mask_dir)
+        self.prompt = prompt
+        self.processor = processor
+
+        assert self.img_dir.exists(), f"Missing images: {self.img_dir}"
+        assert self.mask_dir.exists(), f"Missing masks: {self.mask_dir}"
+
+        self.images = sorted(
+            [p for p in self.img_dir.iterdir() if p.suffix.lower() in [".jpg", ".png", ".jpeg"]]
+        )
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img_path = self.images[idx]
+        image = cv2.imread(str(img_path))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        mask_path = self.mask_dir / f"{img_path.stem}_mask.png"
+        if mask_path.exists():
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            mask = (mask > 127).astype(np.float32)
+        else:
+            mask = np.zeros(image.shape[:2], np.float32)
+
+        inputs = self.processor(
+            text=[self.prompt],
+            images=[Image.fromarray(image)],
+            padding=True,
+            return_tensors="pt"
+        )
+
+        return {
+            "pixel_values": inputs["pixel_values"][0],
+            "input_ids": inputs["input_ids"][0],
+            "attention_mask": inputs["attention_mask"][0],
+            "labels": torch.tensor(mask),
+            "filename": img_path.name
         }
+
+# ---------------------------------------------------------------------
+# COLLATE
+# ---------------------------------------------------------------------
+
+def collate_fn(batch):
+    pixel_values = torch.stack([b["pixel_values"] for b in batch])
+    labels = torch.stack([b["labels"] for b in batch])
+
+    max_len = max(b["input_ids"].shape[0] for b in batch)
+
+    def pad(x):
+        return torch.cat([x, torch.zeros(max_len - x.shape[0], dtype=x.dtype)])
+
+    input_ids = torch.stack([pad(b["input_ids"]) for b in batch])
+    attention_mask = torch.stack([pad(b["attention_mask"]) for b in batch])
+
+    return {
+        "pixel_values": pixel_values,
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+        "filenames": [b["filename"] for b in batch]
     }
 
-    # Initialize model and processor
-    try:
-        model = CLIPSegForImageSegmentation.from_pretrained('CIDAS/clipseg-rd64-refined')
-        processor = CLIPSegProcessor.from_pretrained('CIDAS/clipseg-rd64-refined')
-        model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
-        model.eval()
-        print("Loaded CLIPSeg model successfully")
-    except Exception as e:
-        print(f"Failed to load CLIPSeg model: {e}")
-        return
+# ---------------------------------------------------------------------
+# LOSS
+# ---------------------------------------------------------------------
 
-    # Metrics storage
-    all_metrics = {}
+def dice_loss(pred, target, eps=1e-5):
+    p = pred.view(-1)
+    t = target.view(-1)
+    inter = (p * t).sum()
+    return 1 - (2 * inter + eps) / (p.sum() + t.sum() + eps)
 
-    for dataset_name, dataset_info in datasets.items():
-        img_dir = dataset_info["path"]
-        prompts = dataset_info["prompts"]
-        
-        if not os.path.exists(img_dir):
-            print(f"Dataset {dataset_name} not found at {img_dir}, skipping...")
-            continue
+# ---------------------------------------------------------------------
+# VALIDATION
+# ---------------------------------------------------------------------
 
-        print(f"\nProcessing {dataset_name} dataset...")
+@torch.no_grad()
+def validate(model, dataset, device):
+    model.eval()
+    ious, dices = [], []
 
-        # Create output directories for this dataset
-        for method in ["max", "mean"]:
-            os.makedirs(f"outputs/clipseg_ensemble/{dataset_name}/{method}", exist_ok=True)
+    for sample in dataset:
+        pv = sample["pixel_values"].unsqueeze(0).to(device)
+        ids = sample["input_ids"].unsqueeze(0).to(device)
+        am = sample["attention_mask"].unsqueeze(0).to(device)
+        gt = sample["labels"].numpy()
 
-        dataset_metrics = {}
-        
-        # Get image files
-        img_files = [f for f in os.listdir(img_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        
-        # Process a sample of images (first 5) to avoid long processing times
-        sample_size = min(5, len(img_files))
-        sample_files = img_files[:sample_size]
+        logits = model(pixel_values=pv, input_ids=ids, attention_mask=am).logits
+        logits = torch.nn.functional.interpolate(
+            logits.unsqueeze(1), size=gt.shape, mode="bilinear", align_corners=False
+        ).squeeze()
 
-        for i, img_file in enumerate(sample_files):
-            img_path = os.path.join(img_dir, img_file)
+        pred = (torch.sigmoid(logits) > 0.5).cpu().numpy()
+        ious.append(compute_iou(pred, gt))
+        dices.append(compute_dice(pred, gt))
 
-            # Load image
-            image = cv2.imread(img_path)
-            if image is None:
-                continue
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            orig_h, orig_w = image_rgb.shape[:2]
+    return np.mean(ious), np.mean(dices), len(ious)
 
-            # Load corresponding ground truth mask
-            mask_file = img_file.rsplit('.', 1)[0] + "_mask.png"
-            mask_path = os.path.join(img_dir.replace('/images', '/masks'), mask_file)
-            if os.path.exists(mask_path):
-                gt_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                if gt_mask is not None:
-                    gt_mask = (gt_mask > 127).astype(bool)  # Convert to binary
-                else:
-                    gt_mask = np.zeros((orig_h, orig_w), dtype=bool)
-            else:
-                # Try to find a matching mask file by looking for similar names
-                mask_candidates = list(Path(img_dir.replace('/images', '/masks')).glob(f"*{img_file.split('.')[0]}*"))
-                if mask_candidates:
-                    gt_mask = cv2.imread(str(mask_candidates[0]), cv2.IMREAD_GRAYSCALE)
-                    if gt_mask is not None:
-                        gt_mask = (gt_mask > 127).astype(bool)
-                    else:
-                        gt_mask = np.zeros((orig_h, orig_w), dtype=bool)
-                else:
-                    gt_mask = np.zeros((orig_h, orig_w), dtype=bool)
+# ---------------------------------------------------------------------
+# TRAINING
+# ---------------------------------------------------------------------
 
-            # Run inference for each prompt
-            prompt_predictions = []
-            for prompt in prompts:
-                # Preprocess image for model
-                inputs = processor(text=[prompt], images=[Image.fromarray(image_rgb)],
-                                  padding=True, return_tensors="pt")
-                inputs = {k: v.to(model.device) for k, v in inputs.items()}
+def train():
+    print("\nPHASE 3B — HEAD-ONLY FINETUNING (TERMINAL LOGGING)")
+    print("=" * 72)
 
-                with torch.no_grad():
-                    outputs = model(**inputs)
-                    pred = outputs.logits.cpu().numpy()[0]
-                
-                # Resize prediction to original image size
-                pred_resized = cv2.resize(pred, (orig_w, orig_h))
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-                # Normalize to [0,1]
-                pred_normalized = (pred_resized - pred_resized.min()) / (pred_resized.max() - pred_resized.min() + 1e-8)
-                
-                prompt_predictions.append(pred_normalized)
-            
-            # Stack predictions for ensembling
-            stacked_preds = np.stack(prompt_predictions, axis=0)  # Shape: (num_prompts, H, W)
-            
-            # Apply ensemble methods
-            max_ensemble = np.max(stacked_preds, axis=0)
-            mean_ensemble = np.mean(stacked_preds, axis=0)
-            
-            # Apply different thresholds
-            for threshold in [0.3, 0.5]:
-                # Max ensemble with threshold
-                max_pred_binary = (max_ensemble > threshold).astype(bool)
-                
-                # Mean ensemble with threshold  
-                mean_pred_binary = (mean_ensemble > threshold).astype(bool)
-                
-                # Compute metrics
-                max_iou = compute_iou(max_pred_binary, gt_mask)
-                max_dice = compute_dice(max_pred_binary, gt_mask)
-                
-                mean_iou = compute_iou(mean_pred_binary, gt_mask)
-                mean_dice = compute_dice(mean_pred_binary, gt_mask)
-                
-                # Store metrics
-                if f"max_thr{threshold}" not in dataset_metrics:
-                    dataset_metrics[f"max_thr{threshold}"] = {"iou": [], "dice": []}
-                    dataset_metrics[f"mean_thr{threshold}"] = {"iou": [], "dice": []}
-                
-                dataset_metrics[f"max_thr{threshold}"]["iou"].append(max_iou)
-                dataset_metrics[f"max_thr{threshold}"]["dice"].append(max_dice)
-                dataset_metrics[f"mean_thr{threshold}"]["iou"].append(mean_iou)
-                dataset_metrics[f"mean_thr{threshold}"]["dice"].append(mean_dice)
-                
-                # Save predicted masks
-                max_mask_path = f"outputs/clipseg_ensemble/{dataset_name}/max/{img_file.rsplit('.', 1)[0]}_pred_mask_thr{threshold}.png"
-                mean_mask_path = f"outputs/clipseg_ensemble/{dataset_name}/mean/{img_file.rsplit('.', 1)[0]}_pred_mask_thr{threshold}.png"
-                
-                cv2.imwrite(max_mask_path, (max_pred_binary.astype(np.uint8) * 255))
-                cv2.imwrite(mean_mask_path, (mean_pred_binary.astype(np.uint8) * 255))
-                
-                # Create visualization with both max and mean ensembles
-                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined")
+    processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
 
-                axes[0].imshow(image_rgb)
-                axes[0].set_title("Original Image")
-                axes[0].axis('off')
+    # Freeze encoders
+    for name, p in model.named_parameters():
+        p.requires_grad = "decoder" in name
 
-                axes[1].imshow(gt_mask, cmap='gray')
-                axes[1].set_title("Ground Truth Mask")
-                axes[1].axis('off')
+    model.to(device)
+    model.train()
 
-                axes[2].imshow(max_pred_binary, cmap='gray')
-                axes[2].set_title(f"Max Ensemble Mask\n(Thr: {threshold})")
-                axes[2].axis('off')
+    cracks_train = DrywallDataset(
+        DATA_ROOT / "cracks/train/images",
+        DATA_ROOT / "cracks/train/masks",
+        "drywall crack",
+        processor
+    )
 
-                axes[3].imshow(mean_pred_binary, cmap='gray')
-                axes[3].set_title(f"Mean Ensemble Mask\n(Thr: {threshold})")
-                axes[3].axis('off')
+    taping_train = DrywallDataset(
+        DATA_ROOT / "taping/train/images",
+        DATA_ROOT / "taping/train/masks",
+        "drywall joint tape",
+        processor
+    )
 
-                plt.suptitle(f"Max Ensemble - IoU: {max_iou:.3f}, Dice: {max_dice:.3f} | Mean Ensemble - IoU: {mean_iou:.3f}, Dice: {mean_dice:.3f}")
-                plt.tight_layout()
+    train_loader = DataLoader(
+        ConcatDataset([cracks_train, taping_train]),
+        batch_size=16,
+        shuffle=True,
+        collate_fn=collate_fn
+    )
 
-                vis_path = f"outputs/clipseg_ensemble/{dataset_name}/max/{img_file.replace('.', '_')}_ensemble_vis_thr{threshold}.png"
-                plt.savefig(vis_path, dpi=150, bbox_inches='tight')
-                plt.close()
+    cracks_val = DrywallDataset(
+        DATA_ROOT / "cracks/valid/images",
+        DATA_ROOT / "cracks/valid/masks",
+        "drywall crack",
+        processor
+    )
 
-                print(f"    Processed {img_file} with threshold {threshold}: Max(IoU={max_iou:.3f}, Dice={max_dice:.3f}), Mean(IoU={mean_iou:.3f}, Dice={mean_dice:.3f})")
+    taping_val = DrywallDataset(
+        DATA_ROOT / "taping/valid/images",
+        DATA_ROOT / "taping/valid/masks",
+        "drywall joint tape",
+        processor
+    )
 
-        # Calculate average metrics for this dataset
-        for method_threshold, values in dataset_metrics.items():
-            if values["iou"]:  # Check if there are any values
-                avg_iou = np.mean(values["iou"])
-                avg_dice = np.mean(values["dice"])
-                print(f"  Average for {method_threshold}: IoU={avg_iou:.3f}, Dice={avg_dice:.3f}")
+    opt = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    scaler = torch.cuda.amp.GradScaler()
 
-        all_metrics[dataset_name] = dataset_metrics
+    best_iou = -1
+    patience, wait = 3, 0
 
-    return all_metrics
+    for epoch in range(20):
+        total_loss = 0
 
-def update_readme_with_ensemble_results(metrics):
-    """Update README with Phase 3A results"""
-    readme_path = "README.md"
+        for batch in train_loader:
+            pv = batch["pixel_values"].to(device)
+            ids = batch["input_ids"].to(device)
+            am = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
 
-    phase3a_section = f"""
+            with torch.cuda.amp.autocast():
+                logits = model(pixel_values=pv, input_ids=ids, attention_mask=am).logits
+                logits = torch.nn.functional.interpolate(
+                    logits.unsqueeze(1),
+                    size=labels.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False
+                ).squeeze(1)
 
-## Phase 3A: Prompt Ensembling
+                bce = nn.BCEWithLogitsLoss()(logits, labels)
+                dice = dice_loss(torch.sigmoid(logits), labels)
+                loss = bce + dice
 
-Prompt ensembling was performed using the same CLIPSeg model (CIDAS/clipseg-rd64-refined) to improve segmentation performance by combining predictions from multiple related prompts. This approach leverages the idea that different prompts may capture complementary aspects of the target objects.
+            opt.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
 
-### Ensemble Strategy:
-- **Cracks Prompt Set**: ["drywall crack", "crack on drywall surface", "thin crack on wall", "hairline crack in drywall"]
-- **Taping Prompt Set**: ["drywall joint tape", "drywall joint seam", "taped drywall joint", "drywall seam line"]
-- **Combination Methods**: Pixel-wise max and pixel-wise mean
-- **Thresholds Tested**: 0.3 and 0.5
+            total_loss += loss.item()
 
-### Evaluation Results:
-"""
+        c_iou, c_dice, _ = validate(model, cracks_val, device)
+        t_iou, t_dice, _ = validate(model, taping_val, device)
 
-    for dataset, dataset_metrics in metrics.items():
-        phase3a_section += f"\n**{dataset.capitalize()} Dataset:**\n"
-        for method_threshold, values in dataset_metrics.items():
-            if values["iou"]:  # Check if there are any values
-                avg_iou = np.mean(values["iou"])
-                avg_dice = np.mean(values["dice"])
-                phase3a_section += f"- {method_threshold}: IoU={avg_iou:.3f}, Dice={avg_dice:.3f}\n"
+        print(
+            f"Epoch {epoch+1:02d} | "
+            f"Loss {total_loss:.3f} | "
+            f"Cracks IoU {c_iou:.3f} Dice {c_dice:.3f} | "
+            f"Taping IoU {t_iou:.3f} Dice {t_dice:.3f}"
+        )
 
-    phase3a_section += """
-
-### Observed Improvements:
-- Ensemble methods showed modest improvements over individual prompts in some cases
-- Max ensembling tended to preserve the most confident predictions from any single prompt
-- Mean ensembling provided more balanced predictions by averaging across all prompts
-- Lower threshold (0.3) generally produced more inclusive predictions compared to 0.5
-
-### Comparison Against Phase 2 Baseline:
-- Performance remains challenging due to the complexity of drywall defects
-- Ensemble approaches provide more robust predictions than single-prompt approaches
-- The improvement varied by dataset and target object type
-- Ensembling helps address the limitations of single prompts for thin structures and weak labels
-"""
-
-    # Read existing README and append the section
-    if os.path.exists(readme_path):
-        with open(readme_path, 'r') as f:
-            content = f.read()
-
-        # Check if Phase 3A section already exists
-        if "Phase 3A: Prompt Ensembling" in content:
-            # Replace existing section
-            start_idx = content.find("## Phase 3A: Prompt Ensembling")
-            if start_idx != -1:
-                # Find next section header or end of file
-                next_header_idx = content.find("\n## ", start_idx + 1)
-                if next_header_idx == -1:
-                    next_header_idx = len(content)
-                content = content[:start_idx] + phase3a_section.strip()
-            else:
-                content += phase3a_section
+        mean_iou = (c_iou + t_iou) / 2
+        if mean_iou > best_iou:
+            best_iou = mean_iou
+            wait = 0
+            torch.save(model.state_dict(), OUT_ROOT / "best_model.pt")
+            print("  ↑ New best checkpoint saved")
         else:
-            content += phase3a_section
-    else:
-        content = f"# Drywall Prompted Segmentation Project\n{phase3a_section}"
+            wait += 1
+            if wait >= patience:
+                print("Early stopping triggered")
+                break
 
-    with open(readme_path, 'w') as f:
-        f.write(content)
+    print("\nFINAL BEST mIoU:", best_iou)
+    print("Checkpoint:", OUT_ROOT / "best_model.pt")
 
-    print("Updated README.md with Phase 3A results")
-
-def main():
-    # Run ensemble inference
-    metrics = run_ensemble_inference()
-
-    # Print summary
-    print("\n" + "="*60)
-    print("CLIPSEG PROMPT ENSEMBLE COMPLETE")
-    print("="*60)
-    for dataset, dataset_metrics in metrics.items():
-        print(f"\n{dataset.upper()} DATASET:")
-        for method_threshold, values in dataset_metrics.items():
-            if values["iou"]:  # Check if there are any values
-                avg_iou = np.mean(values["iou"])
-                avg_dice = np.mean(values["dice"])
-                print(f"  {method_threshold}: IoU={avg_iou:.3f}, Dice={avg_dice:.3f}")
-
-    # Update README
-    update_readme_with_ensemble_results(metrics)
-
-    print(f"\nResults saved to outputs/clipseg_ensemble/")
-    print("Visualizations saved in max subdirectories")
-    print("README.md updated with Phase 3A section")
+# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    train()

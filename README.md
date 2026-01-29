@@ -47,7 +47,3 @@ Fine-tune CLIPSeg model for binary segmentation of drywall defects (cracks and j
    python utils/eval_valid.py
    ```
 
-6. Perform sanity check:
-   ```bash
-   python utils/sanity_check_inference.py
-   ```
